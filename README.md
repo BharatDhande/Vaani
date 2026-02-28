@@ -1,8 +1,8 @@
-# AIRI ALEX - AI Assistant Backend
+# Vaani - AI Assistant Backend
 
 ## Project Structure
 ```
-airi-alex-backend/
+Vaani-backend/
 ├── app/
 │   ├── main.py                  # FastAPI app entry point
 │   ├── core/
