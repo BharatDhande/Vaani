@@ -11,10 +11,6 @@ import pyaudio
 from vosk import Model, KaldiRecognizer
 from datetime import datetime
 
-# ─────────────────────────────────────────────
-# CONFIG
-# ─────────────────────────────────────────────
-
 BASE_URL    = "http://127.0.0.1:8000"
 WAKE_WORDS  = [
     # Exact
@@ -27,11 +23,6 @@ WAKE_WORDS  = [
 MIC_INDEX   = 1        # Realtek Microphone Array
 SAMPLE_RATE = 16000    # vosk needs 16kHz
 VOSK_MODEL  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vosk-model-small-en-us-0.15")
-
-
-# ─────────────────────────────────────────────
-# VOICE ENGINE
-# ─────────────────────────────────────────────
 
 class VoiceEngine:
     """
