@@ -18,5 +18,5 @@ else:
         z.extractall(".")
     os.remove(model_zip)
     print("Model ready:", model_dir)
-
+#hello
 print("\nDone! Now run:  flet run app.py")

@@ -16,10 +16,17 @@ from datetime import datetime
 # ─────────────────────────────────────────────
 
 BASE_URL    = "http://127.0.0.1:8000"
-WAKE_WORDS  = ["vaani", "hey vaani", "ok vaani"]   # all lowercase
+WAKE_WORDS  = [
+    # Exact
+    "vaani", "hey vaani", "ok vaani",
+    # Vosk mishearings of "vaani" / "hey vaani"
+    "hey man", "hey when", "hey one", "hey wan",
+    "bani", "bonnie", "barney", "vonnie",
+    "jarvis", "hey jarvis",   # bonus classic wake words
+]
 MIC_INDEX   = 1        # Realtek Microphone Array
 SAMPLE_RATE = 16000    # vosk needs 16kHz
-VOSK_MODEL  = "vosk-model-small-en-us-0.15"  # folder name after extraction
+VOSK_MODEL  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vosk-model-small-en-us-0.15")
 
 
 # ─────────────────────────────────────────────
@@ -28,116 +35,151 @@ VOSK_MODEL  = "vosk-model-small-en-us-0.15"  # folder name after extraction
 
 class VoiceEngine:
     """
-    Wake word  : vosk  (local, offline, instant — no API call)
-    Commands   : Google STT (accurate for full sentences)
-    TTS        : edge-tts (Microsoft Neural voices)
+    Single PyAudio stream owns the mic 100% of the time.
+    Wake word + command both handled via vosk + raw audio bytes.
+    Google STT used only for final command transcription (raw bytes, no sr.Microphone).
+    TTS via edge-tts + pygame.
     """
+
+    CHUNK       = 4096
+    CMD_SILENCE = 1.5   # seconds of silence = end of command
+    CMD_MAX     = 10.0  # max command duration in seconds
 
     def __init__(self, page, command_callback, status_callback):
         self.page             = page
         self.command_callback = command_callback
         self.status_callback  = status_callback
         self.running          = True
+        self.speaking         = False
 
         pygame.mixer.init()
 
-        # ── Load vosk model ──────────────────────────────────────────────
+        # ── Vosk model ───────────────────────────────────────────────────
         if not os.path.exists(VOSK_MODEL):
-            raise FileNotFoundError(
-                f"Vosk model not found: '{VOSK_MODEL}'\n"
-                "Run setup_vosk.bat first!"
-            )
+            raise FileNotFoundError(f"Vosk model not found: {VOSK_MODEL}")
 
         print("Loading vosk model...", end=" ", flush=True)
-        self.vosk_model = Model(VOSK_MODEL)
+        self.model = Model(VOSK_MODEL)
         print("ready")
 
-        # ── PyAudio stream (16kHz mono — vosk requirement) ───────────────
-        self.pa     = pyaudio.PyAudio()
+        # ── Single persistent PyAudio stream ────────────────────────────
+        self.pa = pyaudio.PyAudio()
         self.stream = self.pa.open(
             format=pyaudio.paInt16,
             channels=1,
             rate=SAMPLE_RATE,
             input=True,
             input_device_index=MIC_INDEX,
-            frames_per_buffer=4000,
+            frames_per_buffer=self.CHUNK,
         )
+        print(f"✅ Mic open — device {MIC_INDEX} @ {SAMPLE_RATE}Hz")
+        print(f"✅ Wake words: {WAKE_WORDS}")
 
-        # ── Google STT for commands ──────────────────────────────────────
-        self.recognizer = sr.Recognizer()
-        self.recognizer.energy_threshold         = 300
-        self.recognizer.dynamic_energy_threshold = True
-        self.recognizer.pause_threshold           = 0.7
-
-        print(f"✅ Voice engine ready  |  wake words: {WAKE_WORDS}")
-
-    # ── Start ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────
 
     def start(self):
-        self.stream.start_stream()
-        threading.Thread(target=self._wake_loop, daemon=True).start()
-        print("🎤 Listening...")
+        threading.Thread(target=self._main_loop, daemon=True).start()
+        print("🎤 Listening for wake word...")
 
-    # ── Wake word loop (vosk — local, zero latency) ───────────────────────
+    # ─────────────────────────────────────────────────────────────────────
 
-    def _wake_loop(self):
-        rec = KaldiRecognizer(self.vosk_model, SAMPLE_RATE)
-        rec.SetWords(False)  # faster — no word timestamps needed
+    def _read(self):
+        """Read one chunk from mic, returns bytes."""
+        return self.stream.read(self.CHUNK, exception_on_overflow=False)
+
+    def _main_loop(self):
+        """Single loop: wake → command → back to wake."""
+        rec = KaldiRecognizer(self.model, SAMPLE_RATE)
 
         while self.running:
             try:
-                data = self.stream.read(4000, exception_on_overflow=False)
-
-                if rec.AcceptWaveform(data):
-                    result = json.loads(rec.Result()).get("text", "").lower()
-                else:
-                    result = json.loads(rec.PartialResult()).get("partial", "").lower()
-
-                if not result:
+                if self.speaking:
+                    # Drain mic while TTS is playing so buffer doesn't fill
+                    self._read()
                     continue
 
-                # Print only non-empty partials for debug
-                # print(f"  partial: {result}")
+                data = self._read()
 
-                if any(w in result for w in WAKE_WORDS):
-                    print(f"✅ Wake word in: '{result}'")
-                    rec = KaldiRecognizer(self.vosk_model, SAMPLE_RATE)  # reset
+                if rec.AcceptWaveform(data):
+                    text = json.loads(rec.Result()).get("text", "").lower()
+                else:
+                    text = json.loads(rec.PartialResult()).get("partial", "").lower()
+
+                if not text:
+                    continue
+
+                print(f"  vosk: {text}")
+
+                if any(w in text for w in WAKE_WORDS):
+                    print("✅ Wake word!")
+                    rec = KaldiRecognizer(self.model, SAMPLE_RATE)  # reset
                     self.status_callback("wake")
-                    self._listen_for_command()
+                    command = self._capture_command()
+                    if command:
+                        self.command_callback(command)
+                    else:
+                        self.status_callback("idle")
 
             except Exception as e:
                 if self.running:
-                    print(f"Wake loop error: {e}")
+                    print(f"Loop error: {e}")
 
-    # ── Command (Google STT — accurate for full sentences) ────────────────
-
-    def _listen_for_command(self):
+    def _capture_command(self):
+        """
+        After wake word: record until silence, then transcribe with Google STT.
+        Uses the SAME pyaudio stream — no mic conflicts.
+        """
         self.status_callback("listening")
-        print("🎧 Listening for command...")
+        print("🎧 Speak your command...")
 
-        # Pause vosk stream briefly so sr.Microphone can use the mic
-        self.stream.stop_stream()
+        rec = KaldiRecognizer(self.model, SAMPLE_RATE)
+        frames = []
+        silent_chunks = 0
+        total_chunks  = 0
+
+        # How many silent chunks = end of speech
+        silence_limit = int(self.CMD_SILENCE * SAMPLE_RATE / self.CHUNK)
+        max_chunks    = int(self.CMD_MAX    * SAMPLE_RATE / self.CHUNK)
+
+        while total_chunks < max_chunks:
+            data = self._read()
+            frames.append(data)
+            total_chunks += 1
+
+            # Use vosk energy to detect silence
+            rec.AcceptWaveform(data)
+            partial = json.loads(rec.PartialResult()).get("partial", "")
+
+            if partial:
+                silent_chunks = 0   # reset silence counter on speech
+                print(f"  cmd partial: {partial}")
+            else:
+                silent_chunks += 1
+
+            if silent_chunks >= silence_limit and total_chunks > 8:
+                break   # silence detected — done recording
+
+        if not frames:
+            return None
+
+        # Send raw PCM to Google STT via sr.AudioData (no Microphone needed)
+        raw = b"".join(frames)
+        audio_data = sr.AudioData(raw, SAMPLE_RATE, 2)  # 2 bytes = paInt16
+
+        recognizer = sr.Recognizer()
         try:
-            with sr.Microphone(device_index=MIC_INDEX) as source:
-                self.recognizer.adjust_for_ambient_noise(source, duration=0.2)
-                audio = self.recognizer.listen(source, timeout=6, phrase_time_limit=10)
-
-            text = self.recognizer.recognize_google(audio)
-            if text:
-                print(f"📝 Command: {text}")
-                self.command_callback(text)
-
-        except sr.WaitTimeoutError:
-            print("No command heard.")
-            self.status_callback("idle")
+            text = recognizer.recognize_google(audio_data)
+            print(f"📝 Command: {text}")
+            return text
         except sr.UnknownValueError:
-            print("Could not understand.")
-            self.status_callback("idle")
-        except Exception as e:
-            print(f"Command error: {e}")
-            self.status_callback("idle")
-        finally:
-            self.stream.start_stream()  # resume wake word listening
+            print("Could not understand command.")
+            return None
+        except sr.RequestError as e:
+            print(f"Google STT error: {e}")
+            # Fallback: use vosk result
+            result = json.loads(rec.FinalResult()).get("text", "")
+            print(f"📝 Vosk fallback: {result}")
+            return result if result else None
 
     # ── TTS ───────────────────────────────────────────────────────────────
 
@@ -145,7 +187,7 @@ class VoiceEngine:
         if not text:
             return
         self.status_callback("speaking")
-        self.stream.stop_stream()   # free mic during TTS
+        self.speaking = True
         try:
             tts_file = os.path.join(os.environ.get("TEMP", "."), "vaani_response.mp3")
             communicate = edge_tts.Communicate(text, "en-US-AriaNeural")
@@ -157,7 +199,7 @@ class VoiceEngine:
         except Exception as e:
             print(f"TTS error: {e}")
         finally:
-            self.stream.start_stream()
+            self.speaking = False
         self.status_callback("idle")
 
     # ── Stop ──────────────────────────────────────────────────────────────
@@ -165,7 +207,6 @@ class VoiceEngine:
     def stop(self):
         self.running = False
         try:
-            self.stream.stop_stream()
             self.stream.close()
             self.pa.terminate()
         except:
@@ -537,7 +578,7 @@ class AssistantApp:
                 self._set_orb("#1A2744", ft.Icons.MIC_NONE, "Say 'Hey Vaani'", "#3D6FFF")
             self.page.update()
 
-        self.page.call_from_thread(update)
+        update()
 
     def _set_orb(self, ring_color, icon, status_text, icon_color):
         self.orb_ring.border = ft.Border.all(1.5, ring_color)
@@ -588,10 +629,10 @@ class AssistantApp:
         # Add user message
         msg = Message("user", text)
         self.messages.append(msg)
-        self.page.call_from_thread(lambda: self._add_message(msg))
+        self._add_message(msg)
 
         self.update_status("processing")
-        self.page.call_from_thread(self._add_typing_indicator)
+        self._add_typing_indicator()
 
         future = asyncio.run_coroutine_threadsafe(
             self.call_backend(text),
@@ -600,11 +641,11 @@ class AssistantApp:
 
         try:
             response = future.result(20)
-            self.page.call_from_thread(self._remove_typing_indicator)
+            self._remove_typing_indicator()
 
             ai_msg = Message("assistant", response)
             self.messages.append(ai_msg)
-            self.page.call_from_thread(lambda: self._add_message(ai_msg))
+            self._add_message(ai_msg)
 
             asyncio.run_coroutine_threadsafe(
                 self.engine.speak(response),
@@ -613,9 +654,9 @@ class AssistantApp:
 
         except Exception as e:
             print("Backend error:", e)
-            self.page.call_from_thread(self._remove_typing_indicator)
+            self._remove_typing_indicator()
             err_msg = Message("assistant", "I couldn't connect to the server. Please check your connection.")
-            self.page.call_from_thread(lambda: self._add_message(err_msg))
+            self._add_message(err_msg)
             self.update_status("idle")
 
     async def call_backend(self, text):
