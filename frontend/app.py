@@ -10,6 +10,12 @@ import pygame
 import pyaudio
 from vosk import Model, KaldiRecognizer
 from datetime import datetime
+import uuid
+import numpy as np
+from openwakeword.model import Model as WakeWordModel
+
+from openwakeword.utils import download_models
+download_models()
 
 BASE_URL    = "http://127.0.0.1:8000"
 WAKE_WORDS  = [
@@ -24,17 +30,14 @@ MIC_INDEX   = 1        # Realtek Microphone Array
 SAMPLE_RATE = 16000    # vosk needs 16kHz
 VOSK_MODEL  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vosk-model-small-en-us-0.15")
 
-class VoiceEngine:
-    """
-    Single PyAudio stream owns the mic 100% of the time.
-    Wake word + command both handled via vosk + raw audio bytes.
-    Google STT used only for final command transcription (raw bytes, no sr.Microphone).
-    TTS via edge-tts + pygame.
-    """
+import numpy as np
+from openwakeword.model import Model as WakeWordModel
 
-    CHUNK       = 4096
-    CMD_SILENCE = 1.5   # seconds of silence = end of command
-    CMD_MAX     = 10.0  # max command duration in seconds
+class VoiceEngine:
+    CHUNK       = 1280   # openwakeword needs 1280 frames @ 16kHz
+    CMD_SILENCE = 4
+    CMD_MAX     = 10.0
+    WAKE_THRESHOLD = 0.35  # confidence threshold (0.0-1.0), raise to reduce false positives
 
     def __init__(self, page, command_callback, status_callback):
         self.page             = page
@@ -45,15 +48,23 @@ class VoiceEngine:
 
         pygame.mixer.init()
 
-        # ── Vosk model ───────────────────────────────────────────────────
+        # Load OpenWakeWord model
+        # Use built-in "hey jarvis" or custom model path
+        model_path = r"E:\MyAssist\venv\Lib\site-packages\openwakeword\resources\models\hey_jarvis_v0.1.onnx"
+
+        self.oww = WakeWordModel(
+            wakeword_models=["alexa"],
+            inference_framework="onnx"
+        )
+
+        print("✅ OpenWakeWord loaded")
+
+        # Load Vosk for command transcription only
         if not os.path.exists(VOSK_MODEL):
             raise FileNotFoundError(f"Vosk model not found: {VOSK_MODEL}")
-
-        print("Loading vosk model...", end=" ", flush=True)
         self.model = Model(VOSK_MODEL)
-        print("ready")
+        print("✅ Vosk model loaded")
 
-        # ── Single persistent PyAudio stream ────────────────────────────
         self.pa = pyaudio.PyAudio()
         self.stream = self.pa.open(
             format=pyaudio.paInt16,
@@ -64,52 +75,48 @@ class VoiceEngine:
             frames_per_buffer=self.CHUNK,
         )
         print(f"✅ Mic open — device {MIC_INDEX} @ {SAMPLE_RATE}Hz")
-        print(f"✅ Wake words: {WAKE_WORDS}")
-
-    # ─────────────────────────────────────────────────────────────────────
 
     def start(self):
-        threading.Thread(target=self._main_loop, daemon=True).start()
-        print("🎤 Listening for wake word...")
-
-    # ─────────────────────────────────────────────────────────────────────
+        self.thread = threading.Thread(
+            target=self._main_loop,
+            daemon=True
+        )
+        self.thread.start()
+        print("🚀 Voice engine started")
 
     def _read(self):
-        """Read one chunk from mic, returns bytes."""
         return self.stream.read(self.CHUNK, exception_on_overflow=False)
 
     def _main_loop(self):
-        """Single loop: wake → command → back to wake."""
-        rec = KaldiRecognizer(self.model, SAMPLE_RATE)
-
+        print("🎤 Listening for wake word...")
         while self.running:
             try:
                 if self.speaking:
-                    # Drain mic while TTS is playing so buffer doesn't fill
                     self._read()
                     continue
 
                 data = self._read()
-
-                if rec.AcceptWaveform(data):
-                    text = json.loads(rec.Result()).get("text", "").lower()
-                else:
-                    text = json.loads(rec.PartialResult()).get("partial", "").lower()
-
-                if not text:
-                    continue
-
-                print(f"  vosk: {text}")
-
-                if any(w in text for w in WAKE_WORDS):
-                    print("✅ Wake word!")
-                    rec = KaldiRecognizer(self.model, SAMPLE_RATE)  # reset
-                    self.status_callback("wake")
-                    command = self._capture_command()
-                    if command:
-                        self.command_callback(command)
-                    else:
-                        self.status_callback("idle")
+                
+                # Convert bytes to int16 numpy array for OpenWakeWord
+                audio_int16 = np.frombuffer(data, dtype=np.int16)
+                print("Max audio:", np.max(np.abs(audio_int16)))
+                
+                # Run wake word detection
+                predictions = self.oww.predict(audio_int16)
+                print(f"Predictions: ", predictions)
+                
+                # Check if any wake word exceeded threshold
+                for model_name, score in predictions.items():
+                    if score > self.WAKE_THRESHOLD:
+                        print(f"✅ Wake word detected! [{model_name}] score={score:.3f}")
+                        self.oww.reset()  # reset scores
+                        self.status_callback("wake")
+                        command = self._capture_command()
+                        if command:
+                            self.command_callback(command)
+                        else:
+                            self.status_callback("idle")
+                        break
 
             except Exception as e:
                 if self.running:
@@ -174,35 +181,55 @@ class VoiceEngine:
 
     # ── TTS ───────────────────────────────────────────────────────────────
 
+
+
     async def speak(self, text):
         if not text:
             return
+
         self.status_callback("speaking")
         self.speaking = True
+
         try:
-            tts_file = os.path.join(os.environ.get("TEMP", "."), "vaani_response.mp3")
+            # Generate unique filename
+            filename = f"vaani_{uuid.uuid4().hex}.mp3"
+            tts_file = os.path.join(os.environ.get("TEMP", "."), filename)
+
             communicate = edge_tts.Communicate(text, "en-US-AriaNeural")
             await communicate.save(tts_file)
+
             pygame.mixer.music.load(tts_file)
             pygame.mixer.music.play()
+
             while pygame.mixer.music.get_busy():
                 await asyncio.sleep(0.1)
+
+            pygame.mixer.music.unload()  # release file lock
+
+            # Optional: delete after playing
+            try:
+                os.remove(tts_file)
+            except:
+                pass
+
         except Exception as e:
             print(f"TTS error: {e}")
+
         finally:
             self.speaking = False
-        self.status_callback("idle")
+            self.status_callback("idle")
 
     # ── Stop ──────────────────────────────────────────────────────────────
 
     def stop(self):
         self.running = False
         try:
+            self.stream.stop_stream()
             self.stream.close()
             self.pa.terminate()
         except:
             pass
-
+        print("🛑 Voice engine stopped")
 
 # ─────────────────────────────────────────────
 # MESSAGE MODEL
@@ -501,7 +528,7 @@ class AssistantApp:
                 blur_radius=12,
                 color="#3D6FFF30" if is_user else "#00000020",
             ),
-            max_width=280,
+            width=280,
         )
 
         row = ft.Row(
@@ -653,14 +680,18 @@ class AssistantApp:
     async def call_backend(self, text):
         try:
             resp = await self.api.post(
-                f"{BASE_URL}/assistant/chat",
-                json={"text": text},
+                f"{BASE_URL}/assistant/api/v1/process",
+                json={
+                    "text": text,
+                    "session_id": "vaani-session",
+                    "partial": False
+                },
             )
+
             if resp.status_code == 200:
-                return resp.json().get("response", "No response.")
+                return resp.json().get("text_response", "No response.")
             return f"Server returned error {resp.status_code}."
-        except httpx.ConnectError:
-            return "Unable to reach the assistant server."
+
         except Exception as e:
             return f"Error: {str(e)}"
 
