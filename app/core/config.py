@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     )
 
     # ─── App ───────────────────────────────────────────────
-    APP_NAME: str = "AIRI Alex Assistant"
+    APP_NAME: str = "Vaani AI Assistant"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     HOST: str = "0.0.0.0"
