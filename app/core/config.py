@@ -7,9 +7,12 @@ Supports: OpenRouter API  +  Self-hosted model (vLLM / Ollama / LM Studio)
 from functools import lru_cache
 from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 class Settings(BaseSettings):
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -26,22 +29,27 @@ class Settings(BaseSettings):
 
     # ─── LLM Provider ──────────────────────────────────────
     # Options: "openrouter" | "self_hosted"
-    LLM_PROVIDER: Literal["openrouter", "self_hosted"] = "openrouter"
+    LLM_PROVIDER: Literal["openrouter", "self_hosted", "gemini"] = "gemini"
 
+
+
+    # ─── Gemini (Google AI Studio) ────────────────────────────
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL")
     # ─── OpenRouter ────────────────────────────────────────
-    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_API_KEY: str = "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"
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     # Fast + cheap model for assistant tasks
-    OPENROUTER_MODEL: str = "mistralai/mistral-7b-instruct:free"
+    OPENROUTER_MODEL: str = "arcee-ai/trinity-large-preview:free"
     # e.g. other options:
     #   "openai/gpt-4o-mini"
     #   "anthropic/claude-3-haiku"
     #   "google/gemma-2-9b-it:free"
 
     # ─── Self-Hosted Model (vLLM / Ollama / LM Studio) ─────
-    SELF_HOSTED_BASE_URL: str = "http://localhost:11434/v1"   # Ollama default
-    SELF_HOSTED_API_KEY: str = "none"                         # vLLM may need key
-    SELF_HOSTED_MODEL: str = "mistral:7b-instruct-q4_K_M"    # quantized
+    # SELF_HOSTED_BASE_URL: str = "http://localhost:11434/v1"   # Ollama default
+    # SELF_HOSTED_API_KEY: str = "none"                         # vLLM may need key
+    # SELF_HOSTED_MODEL: str = "mistral:7b-instruct-q4_K_M"    # quantized
 
     # ─── LLM Generation Settings ───────────────────────────
     LLM_MAX_TOKENS: int = 512          # 256 was too small — JSON + sentence got cut off
@@ -71,19 +79,27 @@ class Settings(BaseSettings):
     def llm_base_url(self) -> str:
         if self.LLM_PROVIDER == "openrouter":
             return self.OPENROUTER_BASE_URL
-        return self.SELF_HOSTED_BASE_URL
+        if self.LLM_PROVIDER == "self_hosted":
+            return self.SELF_HOSTED_BASE_URL
+        return ""  # Gemini doesn't use base_url
+
 
     @property
     def llm_api_key(self) -> str:
         if self.LLM_PROVIDER == "openrouter":
             return self.OPENROUTER_API_KEY
-        return self.SELF_HOSTED_API_KEY
+        if self.LLM_PROVIDER == "self_hosted":
+            return self.SELF_HOSTED_API_KEY
+        return self.GEMINI_API_KEY
+
 
     @property
     def llm_model(self) -> str:
         if self.LLM_PROVIDER == "openrouter":
             return self.OPENROUTER_MODEL
-        return self.SELF_HOSTED_MODEL
+        if self.LLM_PROVIDER == "self_hosted":
+            return self.SELF_HOSTED_MODEL
+        return self.GEMINI_MODEL
 
 
 @lru_cache()
