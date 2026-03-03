@@ -15,6 +15,7 @@ from openai import AsyncOpenAI
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.models.response import AssistantResponse
+import google.generativeai as genai
 
 logger = get_logger(__name__)
 
@@ -65,35 +66,60 @@ class LLMService:
         text: str,
         history: list[dict] | None = None,
     ) -> AssistantResponse:
+
         t0 = time.perf_counter()
         history = history or []
         messages = self._build_messages(text, history)
 
         try:
-            response = await self.client.chat.completions.create(
-                model=settings.llm_model,
-                messages=messages,
-                max_tokens=settings.LLM_MAX_TOKENS,
-                temperature=settings.LLM_TEMPERATURE,
-                # No response_format — most free models don't support it
-                # and silently return empty content when it's set
-            )
 
-            raw = response.choices[0].message.content
-            raw = raw.strip() if raw else ""
+            # ─────────────────────────────────────────
+            # GEMINI
+            # ─────────────────────────────────────────
+            if settings.LLM_PROVIDER == "gemini":
+
+                genai.configure(api_key=settings.GEMINI_API_KEY)
+
+                model = genai.GenerativeModel(settings.GEMINI_MODEL)
+
+                # Convert messages to Gemini format
+                prompt = "\n".join([m["content"] for m in messages])
+
+                response = model.generate_content(
+                    prompt,
+                    generation_config={
+                        "temperature": settings.LLM_TEMPERATURE,
+                        "max_output_tokens": settings.LLM_MAX_TOKENS,
+                    },
+                )
+
+                raw = response.text.strip() if response.text else ""
+
+            # ─────────────────────────────────────────
+            # OPENAI COMPATIBLE (OpenRouter / self-hosted)
+            # ─────────────────────────────────────────
+            else:
+
+                response = await self.client.chat.completions.create(
+                    model=settings.llm_model,
+                    messages=messages,
+                    max_tokens=settings.LLM_MAX_TOKENS,
+                    temperature=settings.LLM_TEMPERATURE,
+                )
+
+                raw = response.choices[0].message.content
+                raw = raw.strip() if raw else ""
+
             latency_ms = int((time.perf_counter() - t0) * 1000)
 
-            logger.info(f"LLM raw [{latency_ms}ms] model={settings.llm_model}: {repr(raw[:300])}")
+            logger.info(
+                f"LLM raw [{latency_ms}ms] model={settings.llm_model}: {repr(raw[:300])}"
+            )
 
             if not raw:
-                logger.error(
-                    "LLM returned EMPTY content. "
-                    "Check: 1) OPENROUTER_API_KEY in .env  "
-                    "2) Model name  3) Credits on openrouter.ai"
-                )
                 return AssistantResponse(
                     intent="llm_response",
-                    text_response="Empty response from AI. Check API key or model name.",
+                    text_response="Empty response from AI.",
                     routed_by="llm",
                     latency_ms=latency_ms,
                     error="empty_llm_response",
@@ -105,7 +131,7 @@ class LLMService:
             logger.error(f"LLM exception: {type(e).__name__}: {e}")
             return AssistantResponse(
                 intent="llm_response",
-                text_response="Sorry, I had trouble connecting to the AI. Please try again.",
+                text_response="AI connection problem.",
                 routed_by="llm",
                 error=str(e),
             )

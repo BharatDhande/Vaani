@@ -1,4 +1,10 @@
-# Vaani - AI Assistant Backend
+(venv) 
+Bharat@VivoBook-ASUS MINGW64 /e/projects (main)
+$ curl -X POST http://127.0.0.1:8000/assistant/chat \
+     -H "Content-Type: application/json" \
+     -d "{\"text\":\"hello\"}"
+{"detail":"Not Found"}(venv) 
+Bharat@VivoBook-ASUS MINGW64 /e/projects (main)# Vaani - AI Assistant Backend
 
 ## Project Structure
 ```
