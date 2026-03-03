@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL")
     # ─── OpenRouter ────────────────────────────────────────
-    OPENROUTER_API_KEY: str = "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"
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_KEY")
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     # Fast + cheap model for assistant tasks
     OPENROUTER_MODEL: str = "arcee-ai/trinity-large-preview:free"
