@@ -18,3 +18,6 @@ class AssistantRequest(BaseModel):
 class StreamRequest(AssistantRequest):
     """Same as AssistantRequest but response will be SSE streamed."""
     pass
+
+
+#code
