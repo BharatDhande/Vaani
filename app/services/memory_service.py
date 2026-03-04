@@ -90,6 +90,4 @@ class MemoryService:
         except Exception as e:
             logger.error(f"Memory clear error: {e}")
 
-
-# Singleton
 memory_service = MemoryService()
