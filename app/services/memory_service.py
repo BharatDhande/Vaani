@@ -7,6 +7,8 @@ Stores conversation history per session.
 
 History format:
   [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
+
+  
 """
 
 import json
