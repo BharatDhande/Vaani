@@ -23,7 +23,7 @@ WAKE_WORDS  = [
     "vaani", "hey vaani", "ok vaani",
     # Vosk mishearings of "vaani" / "hey vaani"
     "hey man", "hey when", "hey one", "hey wan",
-    "bani", "bonnie", "barney", "vonnie",
+    "bani", "bonnie", "barney",
     "jarvis", "hey jarvis",   # bonus classic wake words
 ]
 MIC_INDEX   = 1        # Realtek Microphone Array
