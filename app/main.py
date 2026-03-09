@@ -127,19 +127,9 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
     )
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ROUTERS
-# ─────────────────────────────────────────────────────────────────────────────
-
 app.include_router(health.router, tags=["Health"])
 app.include_router(assistant.router, prefix="/assistant", tags=["Assistant"])
 app.include_router(stream.router, prefix="/stream", tags=["Streaming"])
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ROOT
-# ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/", tags=["Root"])
 async def root():
