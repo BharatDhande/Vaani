@@ -59,7 +59,7 @@ class AssistantResponse(BaseModel):
     routed_by: Literal["rule", "llm"] = "rule"
     latency_ms: Optional[int] = None
     error: Optional[str] = None
-    extra: Optional[dict[str, Any]] = None  # forward-compatible extras
+    extra: Optional[dict[str, Any]] = None     #forward-compatible extras
 
 
 class HealthResponse(BaseModel):
