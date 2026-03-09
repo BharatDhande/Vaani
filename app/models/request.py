@@ -8,7 +8,6 @@ All incoming request schemas.
 from typing import Optional
 from pydantic import BaseModel, Field
 
-
 class AssistantRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=1000, description="Transcribed speech text")
     session_id: Optional[str] = Field(None, description="User/device session for memory")
@@ -20,5 +19,7 @@ class AssistantRequest(BaseModel):
 class StreamRequest(AssistantRequest):
     """Same as AssistantRequest but response will be SSE streamed."""
     pass
+
+
 
 
