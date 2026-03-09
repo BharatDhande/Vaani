@@ -1,10 +1,3 @@
-"""
-models/request.py
-All incoming request schemas.
-"""
-
-
-
 from typing import Optional
 from pydantic import BaseModel, Field
 
