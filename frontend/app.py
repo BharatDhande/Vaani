@@ -17,7 +17,7 @@ from openwakeword.model import Model as WakeWordModel
 from openwakeword.utils import download_models
 download_models()
 
-BASE_URL    = "http://127.0.0.1:8000"
+BASE_URL    = "https://75n2l80s-8000.inc1.devtunnels.ms/"
 WAKE_WORDS  = [
     # Exact
     "vaani", "hey vaani", "ok vaani",
